@@ -3,106 +3,110 @@
 pragma solidity ^0.8.17;
 
 /// @dev Core dependencies.
-import {TargetedLaborGovernor} from "./TargetedLaborGovernor.sol";
-import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
+import {TargetedLaborFront} from "./TargetedLaborFront.sol";
+import {IERC20, IRoyaltiesManager, TargetedLaborStorage} from "./TargetedLaborStorage.sol";
 
-interface IERC20 {
-    function transfer(address _recipient, uint256 _amount)
-        external
-        returns (bool);
-
-    function transferFrom(
-        address _sender,
-        address _recipient,
-        uint256 _amount
-    ) external returns (bool);
-}
-
-/**
- * @title TargetedLabor
- * @dev A protocol for targeted labor that allows requesters to build off-chain jobs that can be
- *      accepted by providers in the protocol.
- */
-contract TargetedLabor is TargetedLaborGovernor {
-    using ECDSA for bytes32;
-
-    struct Job {
-        address funder;
-        address target;
-        uint256 expiration;
-        Release release;
-        Funding funding;
-        uint256 nonce;
+contract TargetedLabor is TargetedLaborFront {
+    constructor(
+        address _owner,
+        address _feesCollector,
+        IERC20 _paymentToken,
+        IRoyaltiesManager _royaltiesManager,
+        uint256 _feesCollectorCutPerMillion,
+        uint256 _royaltiesCutPerMillion
+    )
+        TargetedLaborStorage(
+            _feesCollector,
+            _paymentToken,
+            _royaltiesManager,
+            _feesCollectorCutPerMillion,
+            _royaltiesCutPerMillion
+        )
+    {
+        // EIP712 init
+        // _initializeEIP712('Labor', '2');
     }
 
-    struct Funding {
-        IERC20 token;
-        uint256 amount;
+    /**
+     * See {TargetedLaborBid._bid}
+     *
+     * @notice This an overloaded function and does not include `fingerprint` as a parameter.
+     */
+    function bid(
+        address _provider,
+        address _tokenAddress,
+        uint256 _amount,
+        uint256 _duration
+    ) public {
+        _bid(_provider, _tokenAddress, _amount, _duration, "");
     }
 
-    struct Release {
-        uint256 placeholder;
+    /**
+     * See {TargetedLaborBid._bid}
+     */
+    function bid(
+        address _provider,
+        address _tokenAddress,
+        uint256 _amount,
+        uint256 _duration,
+        bytes memory _fingerprint
+    ) public {
+        _bid(_provider, _tokenAddress, _amount, _duration, _fingerprint);
     }
 
-    mapping(address => Job) public funderToJobs;
+    /**
+     * @dev Remove expired bids from a provider.
+     * @param _providers List of provider addresses to remove expired bids from.
+     * @param _requesters List of bidder addresses to remove expired bids from.
+     */
+    function removeExpired(
+        address[] memory _providers,
+        address[] memory _requesters
+    ) public {
+        uint256 loopLength = _providers.length;
 
-    /// @dev Initialize the protocol.
-    constructor(uint256 _fee) TargetedLaborGovernor(_fee) {}
-
-    /// @dev Allows requesters to cancel a job.
-    function cancel() public {
-        // TODO: Check the funder of the job.
-        // TODO: Yoink money back.
-        // TODO: Terminate the job.
-    }
-
-    /// @dev Allows providers in the protocol to accept a job or any changes when edited.
-    function accept(bytes memory _job, bytes memory _signature) public {
-        /// @dev Decode the job.
-        Job memory job = abi.decode(_job, (Job));
-
-        /// @dev Check that the nonce is all good.
+        /// @dev Check that the arrays are of equal length.
         require(
-            job.nonce == ++nonces[msg.sender][job.nonce],
-            "TargetedLabor: Nonce already used."
+            loopLength == _requesters.length,
+            "TargetedLaborBid: Arrays must be of equal length"
         );
 
-        // @dev Then we hash the details of the job with the target that is
-        //      accepting the job.
-        bytes32 jobHash = keccak256(
-            abi.encodePacked(
-                job.funder,
-                job.target,
-                job.expiration,
-                job.funding.token,
-                job.funding.amount,
-                job.release.placeholder,
-                job.nonce,
-                msg.sender
-            )
-        );
+        /// @dev Load the for loop stack.
+        uint256 i;
 
-        // @dev Check the signature
-        require(
-            jobHash.recover(_signature) == job.funder,
-            "TargetedLabor: Invalid signature"
-        );
-
-        /// @dev Transfer the ERC20 being used as payment from the funder.
-        require(
-            job.funding.token.transferFrom(
-                job.funder,
-                address(this),
-                job.funding.amount
-            ),
-            "TargetedLabor: Failed to transfer ERC20."
-        );
-
-        funderToJobs[job.funder] = job;
+        /// @dev Loop through the arrays and remove expired bids.
+        for (i; i < loopLength; i++) {
+            /// @dev Remove the individual expired bid.
+            _removeExpired(_providers[i], _requesters[i]);
+        }
     }
 
-    /// @dev Allows providers to withdraw their earnings.
-    function withdraw() public {
-        // TODO: Determine the amount of funds the provider has earned.
+    /**
+     * @dev Remove expired bids from a provider.
+     * @param _provider Provider address to remove expired bids from.
+     */
+    function cancel(address _provider) public {
+        address requester = msg.sender;
+
+        /// @dev Get the active bid for the provider and requester.
+        (uint256 bidIndex, bytes32 bidId, , , ) = getBidByRequester(
+            _provider,
+            requester
+        );
+
+        /// @dev Check that the bid exists.
+        _cancel(bidIndex, bidId, _provider, requester);
+    }
+
+    // TODO: Move the bidding process into accept so that requesters
+    //       do not have to run a transaction on-chain.
+    // TODO: Accept a bid only when not paused.
+
+    function accept() public {}
+
+    // TODO: Do NOT immediately release funds to the provider.
+
+    function withdrawFunds() public {
+        // I want to withdraw funds from a job.
     }
 }
