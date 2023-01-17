@@ -239,6 +239,85 @@ abstract contract TargetedLaborFront is TargetedLaborStorage {
     }
 
     /**
+     * @dev Accept a bid by a provider for a requester.
+     * @param _bidIndex The index of the bid to be retrieved.
+     * @param _bidId The id of the bid to be retrieved.
+     * @param _provider Address of the provider being requested for the job.
+     * @param _requester Address of the requester requesting the job.
+     */
+    function _accept(
+        uint256 _bidIndex,
+        bytes32 _bidId,
+        address _provider,
+        address _requester
+    ) internal whenNotPaused {
+        /// @dev Get the bid details out of storage and into memory.
+        Bid memory requesterBid = _getBid(_provider, _bidIndex);
+
+        /// @dev Ensure the bid meets the valid-state conditions.
+        require(
+            requesterBid.id == _bidId &&
+                requesterBid.expires >= block.timestamp,
+            "TargetedLaborBid: Bid does not exist or has expired"
+        );
+
+        /// @dev Get the bid details out of storage and into memory.
+        address requester = requesterBid.requester;
+        uint256 amount = requesterBid.amount;
+
+        /// @dev Check that the requester is the same as the one passed in.
+        _requireRequesterBalance(_requester, amount);
+
+        /// @dev Remove the bid from the provider's list of bids.
+        delete bidsByProvider[_provider][_bidIndex];
+        delete bidIdToIndex[_bidId];
+        delete bidIdByProviderAndRequester[_provider][requester];
+
+        /// @dev Increment the bid counter for the provider.
+        delete bidCounterByProvider[_provider];
+
+        uint256 royaltiesShareAmount;
+        address royaltiesReceiver;
+
+        if (royaltiesCutPerMillion > 0) {
+            royaltiesShareAmount =
+                (amount * royaltiesCutPerMillion) /
+                ONE_MILLION;
+
+            (bool success, bytes memory res) = address(royaltiesManager)
+                .staticcall(
+                    abi.encodeWithSelector(
+                        royaltiesManager.getRoyaltiesReceiver.selector,
+                        address(this),
+                        requester,
+                        _provider
+                    )
+                );
+
+            if (success) {
+                (royaltiesReceiver) = abi.decode(res, (address));
+                if (royaltiesReceiver != address(0)) {
+                    require(
+                        paymentToken.transferFrom(
+                            _requester,
+                            royaltiesReceiver,
+                            royaltiesShareAmount
+                        ),
+                        "TargetedLaborBid: Failed to transfer royalties to receiver"
+                    );
+                }
+            }
+        }
+
+        /// @dev Transfer the funds to the provider.
+        paymentToken.transferFrom(
+            _requester,
+            _provider,
+            amount - royaltiesShareAmount
+        );
+    }
+
+    /**
      * @dev Check if the requester has a bid for an specific token.
      * @param _provider Address of the provider being requested for the job.
      * @param _requester Address of the requester requesting the job.

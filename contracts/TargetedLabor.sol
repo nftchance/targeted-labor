@@ -98,13 +98,26 @@ contract TargetedLabor is TargetedLaborFront {
         _cancel(bidIndex, bidId, _provider, requester);
     }
 
-    // TODO: Move the bidding process into accept so that requesters
-    //       do not have to run a transaction on-chain.
-    // TODO: Accept a bid only when not paused.
+    /**
+     * @dev Accept a bid for a provider placed by a requester.
+     * @param _provider Address of the provider being requested for the job.
+     * @param _requester Address of the requester requesting the job.
+     * @param _data Data to be passed to the accept function.
+     */
+    function accept(
+        address _provider,
+        address _requester,
+        bytes memory _data
+    ) public {
+        /// @dev Get the active bid for the provider and requester.
+        bytes32 bidId = _bytesToBytes32(_data);
 
-    function accept() public {}
+        /// @dev Check that the bid exists.
+        uint256 bidIndex = bidIdToIndex[bidId];
 
-    // TODO: Do NOT immediately release funds to the provider.
+        /// @dev Accept the bid.
+        _accept(bidIndex, bidId, _provider, _requester);
+    }
 
     function withdrawFunds() public {
         // I want to withdraw funds from a job.
