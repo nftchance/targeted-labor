@@ -4,6 +4,7 @@ pragma solidity ^0.8.0;
 
 import {Auth, Authority} from "solmate/src/auth/Auth.sol";
 import {Pausable} from "@openzeppelin/contracts/security/Pausable.sol";
+import {EIP712} from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
 
 import {IRoyaltiesManager} from "./interfaces/IRoyaltiesManager.sol";
 
@@ -25,12 +26,7 @@ interface IERC20 {
         returns (uint256);
 }
 
-contract TargetedLaborStorage is Auth, Pausable {
-    // 182 days - 26 weeks - 6 months
-    uint256 public constant MAX_BID_DURATION = 182 days;
-    uint256 public constant MIN_BID_DURATION = 1 minutes;
-    uint256 public constant ONE_MILLION = 1000000;
-
+contract TargetedLaborStorage is Auth, Pausable, EIP712 {
     struct Bid {
         // Bid Id
         bytes32 id;
@@ -45,6 +41,13 @@ contract TargetedLaborStorage is Auth, Pausable {
         // Fingerprint for composable
         bytes fingerprint;
     }
+
+    /// @dev Defining the range that bid duration can operate within.
+    uint256 public constant MAX_BID_DURATION = 182 days;
+    uint256 public constant MIN_BID_DURATION = 1 minutes;
+
+    /// @dev Handling the fees that are charged for using this marketplace.
+    uint256 public constant ONE_MILLION = 1000000;
 
     /// @dev The token that is used as currency in this marketplace.
     IERC20 public paymentToken;
@@ -62,13 +65,11 @@ contract TargetedLaborStorage is Auth, Pausable {
     mapping(address => mapping(address => bytes32))
         public bidIdByProviderAndRequester;
 
-    address public feesCollector;
     IRoyaltiesManager public royaltiesManager;
 
-    uint256 public feesCollectorCutPerMillion;
     uint256 public royaltiesCutPerMillion;
 
-    // EVENTS
+    /// @dev Announce when a bid is created in the marketplace.
     event BidCreated(
         bytes32 _id,
         address indexed _provider,
@@ -79,6 +80,7 @@ contract TargetedLaborStorage is Auth, Pausable {
         bytes _fingerprint
     );
 
+    /// @dev Announce when a bid is accepted in the marketplace.
     event BidAccepted(
         bytes32 _id,
         address indexed _tokenAddress,
@@ -89,38 +91,37 @@ contract TargetedLaborStorage is Auth, Pausable {
         uint256 _fee
     );
 
+    /// @dev Announce when a bid is cancelled.
     event BidCancelled(
         bytes32 _id,
         address indexed _tokenAddress,
         address indexed _bidder
     );
 
-    event ChangedFeesCollectorCutPerMillion(
-        uint256 _feesCollectorCutPerMillion
-    );
+    /// @dev Announce when the owed royalties cut has been updated.
     event ChangedRoyaltiesCutPerMillion(uint256 _royaltiesCutPerMillion);
-    event FeesCollectorSet(
-        address indexed _oldFeesCollector,
-        address indexed _newFeesCollector
-    );
+
+    /// @dev Announce when the logic of royalty management is updated.
     event RoyaltiesManagerSet(
         IRoyaltiesManager indexed _oldRoyaltiesManager,
         IRoyaltiesManager indexed _newRoyaltiesManager
     );
 
     constructor(
-        address _feesCollector,
         IERC20 _paymentToken,
         IRoyaltiesManager _royaltiesManager,
-        uint256 _feesCollectorCutPerMillion,
-        uint256 _royaltiesCutPerMillion
-    ) Auth(msg.sender, Authority(address(0))) Pausable() {
-        /// @dev Connect the addresses that will be used to collect fees and royalties.
-        setFeesCollector(_feesCollector);
+        uint256 _royaltiesCutPerMillion,
+        string memory _domainSeparatorName,
+        string memory _chainId
+    )
+        Auth(msg.sender, Authority(address(0)))
+        EIP712(_domainSeparatorName, _chainId)
+        Pausable()
+    {
+        /// @dev Initialize the royalty engine.
         setRoyaltiesManager(_royaltiesManager);
 
         /// @dev Initialize the fee structure for jobs running inside the network.
-        setFeesCollectorCutPerMillion(_feesCollectorCutPerMillion);
         setRoyaltiesCutPerMillion(_royaltiesCutPerMillion);
 
         /// @dev Set the payment token that will be used to pay for the jobs.
@@ -142,25 +143,6 @@ contract TargetedLaborStorage is Auth, Pausable {
     }
 
     /**
-     * @dev Sets the share cut for the fees collector of the contract that's
-     *  charged to the seller on a successful sale
-     * @param _feesCollectorCutPerMillion - fees for the collector
-     */
-    function setFeesCollectorCutPerMillion(uint256 _feesCollectorCutPerMillion)
-        public
-        requiresAuth
-    {
-        feesCollectorCutPerMillion = _feesCollectorCutPerMillion;
-
-        require(
-            feesCollectorCutPerMillion + royaltiesCutPerMillion < 1000000,
-            "ERC721Bid#setFeesCollectorCutPerMillion: TOTAL_FEES_MUST_BE_BETWEEN_0_AND_999999"
-        );
-
-        emit ChangedFeesCollectorCutPerMillion(feesCollectorCutPerMillion);
-    }
-
-    /**
      * @dev Sets the share cut for the royalties that's
      *  charged to the seller on a successful sale
      * @param _royaltiesCutPerMillion - fees for royalties
@@ -172,25 +154,11 @@ contract TargetedLaborStorage is Auth, Pausable {
         royaltiesCutPerMillion = _royaltiesCutPerMillion;
 
         require(
-            feesCollectorCutPerMillion + royaltiesCutPerMillion < 1000000,
+            royaltiesCutPerMillion < 1000000,
             "ERC721Bid#setRoyaltiesCutPerMillion: TOTAL_FEES_MUST_BE_BETWEEN_0_AND_999999"
         );
 
         emit ChangedRoyaltiesCutPerMillion(royaltiesCutPerMillion);
-    }
-
-    /**
-     * @notice Set the fees collector
-     * @param _newFeesCollector - fees collector
-     */
-    function setFeesCollector(address _newFeesCollector) public requiresAuth {
-        require(
-            _newFeesCollector != address(0),
-            "ERC721Bid#setFeesCollector: INVALID_FEES_COLLECTOR"
-        );
-
-        emit FeesCollectorSet(feesCollector, _newFeesCollector);
-        feesCollector = _newFeesCollector;
     }
 
     /**
@@ -207,6 +175,7 @@ contract TargetedLaborStorage is Auth, Pausable {
         // );
 
         emit RoyaltiesManagerSet(royaltiesManager, _newRoyaltiesManager);
+        
         royaltiesManager = _newRoyaltiesManager;
     }
 

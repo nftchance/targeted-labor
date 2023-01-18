@@ -8,24 +8,20 @@ import {IERC20, IRoyaltiesManager, TargetedLaborStorage} from "./TargetedLaborSt
 
 contract TargetedLabor is TargetedLaborFront {
     constructor(
-        address _owner,
-        address _feesCollector,
         IERC20 _paymentToken,
         IRoyaltiesManager _royaltiesManager,
-        uint256 _feesCollectorCutPerMillion,
-        uint256 _royaltiesCutPerMillion
+        uint256 _royaltiesCutPerMillion,
+        string memory _domainSeparatorName,
+        string memory _chainId
     )
         TargetedLaborStorage(
-            _feesCollector,
             _paymentToken,
             _royaltiesManager,
-            _feesCollectorCutPerMillion,
-            _royaltiesCutPerMillion
+            _royaltiesCutPerMillion,
+            _domainSeparatorName,
+            _chainId
         )
-    {
-        // EIP712 init
-        // _initializeEIP712('Labor', '2');
-    }
+    {}
 
     /**
      * See {TargetedLaborBid._bid}
